@@ -1,5 +1,5 @@
 // ============================================================
-//  LLM API 调用层（通过 MiniMax M2.7 代理）
+//  LLM API 调用层（MiniMax M2.7 代理 - Anthropic /v1/messages）
 // ============================================================
 
 import { API_CONFIG } from './config.js'
@@ -41,27 +41,28 @@ export class LLMClient {
       tools,
     } = options
 
+    // Anthropic /v1/messages 格式
     const body: Record<string, unknown> = {
       model: this.model,
-      max_tokens: maxTokens,
+      max_tokens: Math.max(1, maxTokens),
       temperature,
-      messages,
-      // 禁用 thinking，减少 token 消耗
-      thinking: { type: 'disabled' },
     }
 
+    // 构建 messages
     if (systemPrompt) {
-      // 张宁修复了代理，现在支持 system 角色
-      body.messages = [
-        { role: 'system' as const, content: systemPrompt },
-        ...messages,
-      ]
+      body.system = systemPrompt
+      body.messages = messages
     } else {
       body.messages = messages
     }
 
+    // Anthropic tools 格式
     if (tools && tools.length > 0) {
-      body.tools = tools
+      body.tools = tools.map(t => ({
+        name: t.name,
+        description: t.description,
+        input_schema: t.input_schema,
+      }))
     }
 
     const response = await fetch(`${this.baseUrl}/v1/messages`, {
@@ -81,36 +82,35 @@ export class LLMClient {
     }
 
     const data = await response.json() as {
-      content?: Array<{ type: string; text?: string; name?: string; input?: Record<string, unknown> }>
+      content?: Array<{ type?: string; text?: string; name?: string; input?: Record<string, unknown> }>
       stop_reason?: string
-      usage?: { input_tokens: number; output_tokens: number }
+      usage?: { input_tokens: number; output_tokens: number; total_tokens: number }
     }
 
-    // 解析响应内容（跳过 thinking 块）
-    const content: string[] = []
+    // 解析响应
+    const textParts: string[] = []
     const toolCalls: ToolCall[] = []
 
     if (data.content) {
       for (const block of data.content) {
         if (block.type === 'text') {
-          const text = (block as { type: 'text'; text?: string }).text || ''
-          content.push(text.trim())
+          textParts.push(block.text || '')
         } else if (block.type === 'tool_use') {
           toolCalls.push({
-            name: (block as { type: 'tool_use'; name?: string }).name || '',
-            input: (block as { type: 'tool_use'; input?: Record<string, unknown> }).input || {},
+            name: block.name || '',
+            input: block.input || {},
           })
         }
-        // 忽略 thinking 块
       }
     }
 
     return {
-      content: content.join('\n'),
-      stopReason: data.stop_reason || 'unknown',
+      content: textParts.join(''),
+      stopReason: data.stop_reason || 'end_turn',
       usage: data.usage ? {
         inputTokens: data.usage.input_tokens,
         outputTokens: data.usage.output_tokens,
+        totalTokens: data.usage.total_tokens,
       } : undefined,
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
     }

@@ -177,7 +177,7 @@ Rules:
       this.taskManager.add(task)
     }
 
-    // 解析 dependsOn
+    // 解析 dependsOn 并建立 pending 队列（所有任务先进 pending）
     for (const task of taskObjects) {
       const pt = planTasks.find(p => p.description === task.description)
       if (pt?.dependsOn) {
@@ -197,7 +197,8 @@ Rules:
           })
           .filter(Boolean) as string[]
       }
-      pending.set(task.id, pt)
+      // 所有任务都要进 pending 队列，不管有没有依赖
+      pending.set(task.id, task)
     }
 
     // 并行执行

@@ -8,7 +8,7 @@ import * as readline from "readline";
 var API_CONFIG = {
   baseUrl: process.env.ANTHROPIC_BASE_URL || "http://localhost:8080",
   apiKey: process.env.ANTHROPIC_AUTH_TOKEN || "sk-test",
-  model: process.env.ANTHROPIC_MODEL || "claude-3-5-sonnet-20241027",
+  model: process.env.ANTHROPIC_MODEL || "astron-code-latest",
   maxTokens: 8192,
   temperature: 0,
   allowedCommands: [
@@ -66,21 +66,21 @@ class LLMClient {
     } = options;
     const body = {
       model: this.model,
-      max_tokens: maxTokens,
-      temperature,
-      messages,
-      thinking: { type: "disabled" }
+      max_tokens: Math.max(1, maxTokens),
+      temperature
     };
     if (systemPrompt) {
-      body.messages = [
-        { role: "system", content: systemPrompt },
-        ...messages
-      ];
+      body.system = systemPrompt;
+      body.messages = messages;
     } else {
       body.messages = messages;
     }
     if (tools && tools.length > 0) {
-      body.tools = tools;
+      body.tools = tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        input_schema: t.input_schema
+      }));
     }
     const response = await fetch(`${this.baseUrl}/v1/messages`, {
       method: "POST",
@@ -97,13 +97,12 @@ class LLMClient {
       throw new Error(`API Error ${response.status}: ${errorText}`);
     }
     const data = await response.json();
-    const content = [];
+    const textParts = [];
     const toolCalls = [];
     if (data.content) {
       for (const block of data.content) {
         if (block.type === "text") {
-          const text = block.text || "";
-          content.push(text.trim());
+          textParts.push(block.text || "");
         } else if (block.type === "tool_use") {
           toolCalls.push({
             name: block.name || "",
@@ -113,12 +112,12 @@ class LLMClient {
       }
     }
     return {
-      content: content.join(`
-`),
-      stopReason: data.stop_reason || "unknown",
+      content: textParts.join(""),
+      stopReason: data.stop_reason || "end_turn",
       usage: data.usage ? {
         inputTokens: data.usage.input_tokens,
-        outputTokens: data.usage.output_tokens
+        outputTokens: data.usage.output_tokens,
+        totalTokens: data.usage.total_tokens
       } : undefined,
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined
     };
@@ -496,7 +495,7 @@ class WorkerPool {
       return this.running.get(task.id).promise;
     }
     const abort = new AbortController;
-    const filesInTask = this.extractFilesFromPrompt(task.prompt);
+    const filesInTask = task.prompt ? this.extractFilesFromPrompt(task.prompt) : [];
     const isWriteTask = task.type === "implement" || task.type === "verify";
     if (isWriteTask && filesInTask.length > 0) {
       const lockResult = this.lockManager.requestLock(filesInTask, task.id);
@@ -560,28 +559,27 @@ class WorkerPool {
   }
   async executeWorker(task, systemContext) {
     const tools = toolRegistry.getDefinitions();
-    const buildPrompt = () => {
-      const modeInstructions = {
-        research: `You are in RESEARCH mode.
+    const modeInstructions = {
+      research: `You are in RESEARCH mode.
 - Use BashTool to explore: ls, find, grep, cat
 - Use FileReadTool to read files
 - Report specific findings with file paths and line numbers`,
-        implement: `You are in IMPLEMENT mode.
+      implement: `You are in IMPLEMENT mode.
 - Use FileWriteTool to create new files
 - Use FileEditTool to modify existing files
 - After writing, verify the file content`,
-        verify: `You are in VERIFY mode.
+      verify: `You are in VERIFY mode.
 - Use BashTool to run tests, linters, type checkers
 - Use FileReadTool to examine outputs
 - Report pass/fail with specific evidence`,
-        test: `You are in TEST mode.
+      test: `You are in TEST mode.
 - Run test suites with BashTool
 - Report test results in detail`,
-        review: `You are in REVIEW mode.
+      review: `You are in REVIEW mode.
 - Use BashTool and FileReadTool to analyze code
 - Suggest specific improvements with examples`
-      };
-      return `${systemContext}
+    };
+    const taskInstructions = `${systemContext}
 
 ## Task
 Type: ${task.type}
@@ -603,45 +601,41 @@ When done, respond with this EXACT XML (include your task-id=${task.id}):
 <summary>One line summary</summary>
 <result>Details of what you did</result>
 </task-notification>`;
-    };
+    const messages = [
+      { role: "user", content: taskInstructions }
+    ];
+    const MAX_ITERATIONS = 10;
     try {
-      const r1 = await this.llm.call({
-        messages: [{ role: "user", content: buildPrompt() }],
-        tools,
-        maxTokens: API_CONFIG.maxTokensPerRequest
-      });
-      if (!r1.toolCalls?.length) {
-        return this.parseNotification(task.id, r1.content);
-      }
-      const toolResults = [];
-      for (const tc of r1.toolCalls) {
-        const result = await toolRegistry.execute(tc.name, tc.input);
-        toolResults.push({ name: tc.name, ...result });
-        console.log(`[WorkerPool] Tool ${tc.name}: ${result.success ? "OK" : "FAIL"}`);
-      }
-      const failures = toolResults.filter((r) => !r.success);
-      if (failures.length > 0) {
-        const msg = failures.map((f) => `${f.name}: ${f.error}`).join(`
-`);
-        const r2 = await this.llm.call({
-          messages: [{
-            role: "user",
-            content: `Some tools failed:
-${msg}
-
-Fix and retry, or report failure with XML.`
-          }],
+      for (let i = 0;i < MAX_ITERATIONS; i++) {
+        const response = await this.llm.call({
+          messages,
           tools,
-          maxTokens: 500
+          maxTokens: API_CONFIG.maxTokensPerRequest
         });
-        return this.parseNotification(task.id, r2.content);
+        const content = response.content.trim();
+        if (!response.toolCalls?.length) {
+          if (content.includes("<task-notification>")) {
+            return this.parseNotification(task.id, content);
+          }
+          return {
+            taskId: task.id,
+            status: "failed",
+            summary: "Model returned plain text without tools or XML",
+            result: `Response: ${content.slice(0, 500)}`
+          };
+        }
+        for (const tc of response.toolCalls) {
+          const result = await toolRegistry.execute(tc.name, tc.input);
+          const toolMsg = result.success ? `Tool ${tc.name} result: ${result.output}` : `Tool ${tc.name} failed: ${result.error}`;
+          messages.push({ role: "user", content: toolMsg });
+          console.log(`[WorkerPool] Tool ${tc.name}: ${result.success ? "OK" : "FAIL"}`);
+        }
       }
       return {
         taskId: task.id,
-        status: "completed",
-        summary: `Executed ${toolResults.length} tool(s) successfully`,
-        result: toolResults.map((r) => `${r.name}: ${r.output}`).join(`
-`)
+        status: "failed",
+        summary: `Max iterations (${MAX_ITERATIONS}) reached without XML notification`,
+        result: "Worker loop exceeded maximum iterations"
       };
     } catch (e) {
       return { taskId: task.id, status: "failed", summary: String(e), result: String(e) };
@@ -1180,7 +1174,7 @@ User request: ` + userPrompt }],
           return null;
         }).filter(Boolean);
       }
-      pending.set(task.id, pt);
+      pending.set(task.id, task);
     }
     while (pending.size > 0 || running.size > 0) {
       for (const [taskId, pt] of pending) {

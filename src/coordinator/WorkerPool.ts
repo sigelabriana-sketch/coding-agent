@@ -32,7 +32,7 @@ export class WorkerPool {
     const abort = new AbortController()
 
     // 分析任务涉及的文件，决定是否需要锁
-    const filesInTask = this.extractFilesFromPrompt(task.prompt)
+    const filesInTask = task.prompt ? this.extractFilesFromPrompt(task.prompt) : []
 
     // 如果是写任务，先请求文件锁
     const isWriteTask = task.type === 'implement' || task.type === 'verify'
@@ -97,7 +97,6 @@ export class WorkerPool {
   // 从 prompt 中提取文件路径（简单正则匹配）
   private extractFilesFromPrompt(prompt: string): string[] {
     const files: string[] = []
-    // 匹配常见文件路径模式
     const patterns = [
       /src\/[\w/.-]+/g,
       /[\w-]+\.(ts|js|tsx|jsx|py|go|rs)/g,
@@ -110,33 +109,32 @@ export class WorkerPool {
     return [...new Set(files)]
   }
 
-  // 执行单个 Worker
+  // 执行单个 Worker（多轮对话循环）
   private async executeWorker(task: Task, systemContext: string): Promise<TaskNotification> {
     const tools = toolRegistry.getDefinitions()
 
-    const buildPrompt = (): string => {
-      const modeInstructions: Record<string, string> = {
-        research: `You are in RESEARCH mode.
+    const modeInstructions: Record<string, string> = {
+      research: `You are in RESEARCH mode.
 - Use BashTool to explore: ls, find, grep, cat
 - Use FileReadTool to read files
 - Report specific findings with file paths and line numbers`,
-        implement: `You are in IMPLEMENT mode.
+      implement: `You are in IMPLEMENT mode.
 - Use FileWriteTool to create new files
 - Use FileEditTool to modify existing files
 - After writing, verify the file content`,
-        verify: `You are in VERIFY mode.
+      verify: `You are in VERIFY mode.
 - Use BashTool to run tests, linters, type checkers
 - Use FileReadTool to examine outputs
 - Report pass/fail with specific evidence`,
-        test: `You are in TEST mode.
+      test: `You are in TEST mode.
 - Run test suites with BashTool
 - Report test results in detail`,
-        review: `You are in REVIEW mode.
+      review: `You are in REVIEW mode.
 - Use BashTool and FileReadTool to analyze code
 - Suggest specific improvements with examples`,
-      }
+    }
 
-      return `${systemContext}
+    const taskInstructions = `${systemContext}
 
 ## Task
 Type: ${task.type}
@@ -158,49 +156,53 @@ When done, respond with this EXACT XML (include your task-id=${task.id}):
 <summary>One line summary</summary>
 <result>Details of what you did</result>
 </task-notification>`
-    }
+
+    // 多轮对话消息历史
+    const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [
+      { role: 'user', content: taskInstructions }
+    ]
+
+    const MAX_ITERATIONS = 10
 
     try {
-      // 第一次调用
-      const r1 = await this.llm.call({
-        messages: [{ role: 'user' as const, content: buildPrompt() }],
-        tools,
-        maxTokens: API_CONFIG.maxTokensPerRequest,
-      })
-
-      if (!r1.toolCalls?.length) {
-        return this.parseNotification(task.id, r1.content)
-      }
-
-      // 执行工具调用
-      const toolResults = []
-      for (const tc of r1.toolCalls) {
-        const result = await toolRegistry.execute(tc.name, tc.input)
-        toolResults.push({ name: tc.name, ...result })
-        console.log(`[WorkerPool] Tool ${tc.name}: ${result.success ? 'OK' : 'FAIL'}`)
-      }
-
-      // 如果有失败的工具，反馈给模型尝试恢复
-      const failures = toolResults.filter(r => !r.success)
-      if (failures.length > 0) {
-        const msg = failures.map(f => `${f.name}: ${f.error}`).join('\n')
-        const r2 = await this.llm.call({
-          messages: [{
-            role: 'user' as const,
-            content: `Some tools failed:\n${msg}\n\nFix and retry, or report failure with XML.`,
-          }],
+      for (let i = 0; i < MAX_ITERATIONS; i++) {
+        const response = await this.llm.call({
+          messages,
           tools,
-          maxTokens: 500,
+          maxTokens: API_CONFIG.maxTokensPerRequest,
         })
-        return this.parseNotification(task.id, r2.content)
+
+        const content = response.content.trim()
+
+        // 无工具调用 → 检查是否包含 XML 通知
+        if (!response.toolCalls?.length) {
+          if (content.includes('<task-notification>')) {
+            return this.parseNotification(task.id, content)
+          }
+          return {
+            taskId: task.id,
+            status: 'failed',
+            summary: 'Model returned plain text without tools or XML',
+            result: `Response: ${content.slice(0, 500)}`,
+          }
+        }
+
+        // 执行工具调用，把结果加入消息历史
+        for (const tc of response.toolCalls) {
+          const result = await toolRegistry.execute(tc.name, tc.input)
+          const toolMsg = result.success
+            ? `Tool ${tc.name} result: ${result.output}`
+            : `Tool ${tc.name} failed: ${result.error}`
+          messages.push({ role: 'user', content: toolMsg })
+          console.log(`[WorkerPool] Tool ${tc.name}: ${result.success ? 'OK' : 'FAIL'}`)
+        }
       }
 
-      // 所有工具成功，直接返回
       return {
         taskId: task.id,
-        status: 'completed',
-        summary: `Executed ${toolResults.length} tool(s) successfully`,
-        result: toolResults.map(r => `${r.name}: ${r.output}`).join('\n'),
+        status: 'failed',
+        summary: `Max iterations (${MAX_ITERATIONS}) reached without XML notification`,
+        result: 'Worker loop exceeded maximum iterations',
       }
     } catch (e) {
       return { taskId: task.id, status: 'failed', summary: String(e), result: String(e) }
