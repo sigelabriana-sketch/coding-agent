@@ -2,7 +2,8 @@
 //  FileReadTool - 读取文件
 // ============================================================
 
-import { readFileSync, statSync } from 'fs'
+import { readFileSync, statSync, existsSync } from 'fs'
+import { resolve, isAbsolute } from 'path'
 
 export const FileReadTool = {
   name: 'FileReadTool',
@@ -13,17 +14,26 @@ export const FileReadTool = {
     input_schema: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Absolute path to the file' },
-        offset: { type: 'number', description: 'Line offset to start reading from (0-indexed)' },
-        limit: { type: 'number', description: 'Maximum number of lines to read' },
+        path: { type: 'string', description: 'Absolute or relative path to the file' },
+        offset: { type: 'number', description: 'Line offset (0-indexed)' },
+        limit: { type: 'number', description: 'Max lines to read' },
       },
       required: ['path'],
     },
   },
 
   async execute(input: Record<string, unknown>) {
-    const path = input.path as string
+    let path = input.path as string
     if (!path) return { success: false, output: '', error: 'path is required' }
+
+    // 如果是相对路径，需要基于当前工作目录解析
+    if (!isAbsolute(path)) {
+      path = resolve(process.cwd(), path)
+    }
+
+    if (!existsSync(path)) {
+      return { success: false, output: '', error: `File not found: ${path}` }
+    }
 
     try {
       const stat = statSync(path)

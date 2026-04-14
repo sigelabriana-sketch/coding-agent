@@ -237,7 +237,8 @@ var BashTool = {
 };
 
 // src/tools/file_read.ts
-import { readFileSync, statSync } from "fs";
+import { readFileSync, statSync, existsSync } from "fs";
+import { resolve, isAbsolute } from "path";
 var FileReadTool = {
   name: "FileReadTool",
   description: "Read the contents of a file",
@@ -247,17 +248,23 @@ var FileReadTool = {
     input_schema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "Absolute path to the file" },
-        offset: { type: "number", description: "Line offset to start reading from (0-indexed)" },
-        limit: { type: "number", description: "Maximum number of lines to read" }
+        path: { type: "string", description: "Absolute or relative path to the file" },
+        offset: { type: "number", description: "Line offset (0-indexed)" },
+        limit: { type: "number", description: "Max lines to read" }
       },
       required: ["path"]
     }
   },
   async execute(input) {
-    const path = input.path;
+    let path = input.path;
     if (!path)
       return { success: false, output: "", error: "path is required" };
+    if (!isAbsolute(path)) {
+      path = resolve(process.cwd(), path);
+    }
+    if (!existsSync(path)) {
+      return { success: false, output: "", error: `File not found: ${path}` };
+    }
     try {
       const stat = statSync(path);
       if (!stat.isFile())
@@ -519,14 +526,14 @@ Fix the errors or report the failure with XML:
 
 // src/context.ts
 import { execSync } from "child_process";
-import { readFileSync as readFileSync3, existsSync, readdirSync } from "fs";
-import { join, resolve } from "path";
+import { readFileSync as readFileSync3, existsSync as existsSync2, readdirSync } from "fs";
+import { join, resolve as resolve2 } from "path";
 function findClaudeMdFiles(startDir) {
   const files = [];
-  let dir = resolve(startDir);
+  let dir = resolve2(startDir);
   for (let i = 0;i < 5; i++) {
     const mdPath = join(dir, "CLAUDE.md");
-    if (existsSync(mdPath)) {
+    if (existsSync2(mdPath)) {
       try {
         files.push({ path: mdPath, content: readFileSync3(mdPath, "utf-8") });
       } catch {}
@@ -540,7 +547,7 @@ function findClaudeMdFiles(startDir) {
 }
 function scanMemoryDir(memoryDir) {
   const files = [];
-  if (!existsSync(memoryDir))
+  if (!existsSync2(memoryDir))
     return files;
   try {
     for (const entry of readdirSync(memoryDir, { withFileTypes: true })) {
@@ -725,7 +732,7 @@ async function main() {
   console.log(`Ready. Type your task (Ctrl+C to exit):
 `);
   while (true) {
-    const input = await new Promise((resolve2) => rl.question("> ", resolve2));
+    const input = await new Promise((resolve3) => rl.question("> ", resolve3));
     if (!input.trim())
       continue;
     try {
