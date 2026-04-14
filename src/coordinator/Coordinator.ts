@@ -11,6 +11,7 @@ import { collectContext, buildWorkerSystemPrompt } from '../context.js'
 import { SessionStore } from '../storage/SessionStore.js'
 import { MemoryPalace } from '../memory/MemoryPalace.js'
 import { API_CONFIG } from '../config.js'
+import * as path from 'path'
 import type { Task, TaskNotification } from '../types.js'
 
 export interface PlanTask {
@@ -60,12 +61,20 @@ export class Coordinator {
     const ctx = await collectContext(this.projectRoot)
     this.context = buildWorkerSystemPrompt(ctx)
 
-    // 加载 Memory Palace 热缓存
-    if (this.memoryPalace && this.memoryPalace.exists()) {
+    // 初始化 Memory Palace（如果不存在则创建）
+    if (this.memoryPalace) {
+      if (!this.memoryPalace.exists()) {
+        const projectName = path.basename(this.projectRoot) || 'coding-agent'
+        const wings = ['coding', 'research', 'infrastructure']
+        await this.memoryPalace.init(projectName, wings)
+        console.log('[Coordinator] Memory Palace initialized with wings:', wings.join(', '))
+      }
       await this.memoryPalace.load()
       const hotCache = await this.memoryPalace.getHotCache()
-      this.memoryContext = `\n\n## 🏛️ Memory Palace (Hot Cache)\n${hotCache}\n`
-      console.log('[Coordinator] Memory Palace loaded')
+      if (hotCache) {
+        this.memoryContext = `\n\n## 🏛️ Memory Palace (Hot Cache)\n${hotCache}\n`
+        console.log('[Coordinator] Memory Palace loaded')
+      }
     }
 
     console.log(`[Coordinator] Session: ${this.sessionId}`)
@@ -343,11 +352,11 @@ Provide a concise summary of:
   // 检测 wing 归属
   private detectWing(prompt: string): string {
     const lower = prompt.toLowerCase()
-    if (lower.includes('research') || lower.includes('paper') || lower.includes('study')) return 'research'
-    if (lower.includes('infra') || lower.includes('deploy') || lower.includes('server')) return 'infrastructure'
-    if (lower.includes('test') || lower.includes('verify')) return 'testing'
-    if (lower.includes('design') || lower.includes('api') || lower.includes('feature')) return 'product-development'
-    return 'general'
+    if (lower.includes('research') || lower.includes('paper') || lower.includes('study') || lower.includes('analysis')) return 'research'
+    if (lower.includes('infra') || lower.includes('deploy') || lower.includes('server') || lower.includes('docker') || lower.includes('ci/cd')) return 'infrastructure'
+    if (lower.includes('test') || lower.includes('verify') || lower.includes('benchmark')) return 'testing'
+    if (lower.includes('design') || lower.includes('api') || lower.includes('feature') || lower.includes('implement')) return 'coding'
+    return 'coding'
   }
 }
 
