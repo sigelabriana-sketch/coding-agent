@@ -371,10 +371,19 @@ Provide a concise summary of:
     failedTaskIds: string[]
   }): void {
     this.sessionId = session.id
-    // 恢复任务
+
+    // 恢复任务及其状态
     for (const task of session.tasks) {
       this.taskManager.add(task)
+      // 显式恢复任务状态（add() 默认 pending）
+      if (session.completedTaskIds.includes(task.id)) {
+        this.taskManager.complete(task.id, task.result || '')
+      } else if (session.failedTaskIds.includes(task.id)) {
+        this.taskManager.fail(task.id, task.result || '')
+      }
+      // pending 任务无需额外操作
     }
+
     // 恢复上下文（用于 Planner 理解之前的状态）
     this.context = session.coordinatorContext
     console.log(`[Coordinator] Restored session ${session.id} with ${session.tasks.length} task(s)`)
