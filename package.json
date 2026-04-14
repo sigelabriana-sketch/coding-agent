@@ -1,0 +1,11 @@
+{
+  "name": "local-coding-agent",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Local coding agent powered by MiniMax M2.7",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "test": "bun test"
+  },
+  "dependencies": {}
+}
