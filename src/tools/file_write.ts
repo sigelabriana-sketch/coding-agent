@@ -3,7 +3,7 @@
 // ============================================================
 
 import { writeFileSync, mkdirSync } from 'fs'
-import { dirname } from 'path'
+import { dirname, resolve, isAbsolute } from 'path'
 
 export const FileWriteTool = {
   name: 'FileWriteTool',
@@ -14,7 +14,7 @@ export const FileWriteTool = {
     input_schema: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Absolute path to the file' },
+        path: { type: 'string', description: 'Absolute or relative path to the file' },
         content: { type: 'string', description: 'File content to write' },
       },
       required: ['path', 'content'],
@@ -29,9 +29,11 @@ export const FileWriteTool = {
     }
 
     try {
-      mkdirSync(dirname(path), { recursive: true })
-      writeFileSync(path, content, 'utf-8')
-      return { success: true, output: `Written: ${path}` }
+      // 解析为绝对路径
+      const absPath = isAbsolute(path) ? path : resolve(process.cwd(), path)
+      mkdirSync(dirname(absPath), { recursive: true })
+      writeFileSync(absPath, content, 'utf-8')
+      return { success: true, output: `Written: ${absPath}` }
     } catch (e) {
       return { success: false, output: '', error: String(e) }
     }

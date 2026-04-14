@@ -374,7 +374,7 @@ var FileEditTool = {
 
 // src/tools/file_write.ts
 import { writeFileSync as writeFileSync2, mkdirSync } from "fs";
-import { dirname } from "path";
+import { dirname, resolve as resolve2, isAbsolute as isAbsolute2 } from "path";
 var FileWriteTool = {
   name: "FileWriteTool",
   description: "Create a new file or overwrite an existing file",
@@ -384,7 +384,7 @@ var FileWriteTool = {
     input_schema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "Absolute path to the file" },
+        path: { type: "string", description: "Absolute or relative path to the file" },
         content: { type: "string", description: "File content to write" }
       },
       required: ["path", "content"]
@@ -397,9 +397,10 @@ var FileWriteTool = {
       return { success: false, output: "", error: "path and content are required" };
     }
     try {
-      mkdirSync(dirname(path), { recursive: true });
-      writeFileSync2(path, content, "utf-8");
-      return { success: true, output: `Written: ${path}` };
+      const absPath = isAbsolute2(path) ? path : resolve2(process.cwd(), path);
+      mkdirSync(dirname(absPath), { recursive: true });
+      writeFileSync2(absPath, content, "utf-8");
+      return { success: true, output: `Written: ${absPath}` };
     } catch (e) {
       return { success: false, output: "", error: String(e) };
     }
@@ -555,10 +556,10 @@ Fix the errors or report the failure with XML:
 // src/context.ts
 import { execSync } from "child_process";
 import { readFileSync as readFileSync3, existsSync as existsSync2, readdirSync } from "fs";
-import { join, resolve as resolve2 } from "path";
+import { join, resolve as resolve3 } from "path";
 function findClaudeMdFiles(startDir) {
   const files = [];
-  let dir = resolve2(startDir);
+  let dir = resolve3(startDir);
   for (let i = 0;i < 5; i++) {
     const mdPath = join(dir, "CLAUDE.md");
     if (existsSync2(mdPath)) {
@@ -760,7 +761,7 @@ async function main() {
   console.log(`Ready. Type your task (Ctrl+C to exit):
 `);
   while (true) {
-    const input = await new Promise((resolve3) => rl.question("> ", resolve3));
+    const input = await new Promise((resolve4) => rl.question("> ", resolve4));
     if (!input.trim())
       continue;
     try {
