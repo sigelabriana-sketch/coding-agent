@@ -12,8 +12,14 @@ export const API_CONFIG = {
   maxTokens: 8192,
   temperature: 0,
   
-  // 工具配置
-  allowedCommands: ['git', 'npm', 'node', 'bun', 'ls', 'cat', 'grep', 'find', 'echo', 'pwd'],
+  // 工具配置 - 文件操作命令白名单
+  allowedCommands: [
+    'git', 'npm', 'node', 'bun', 'ls', 'cat', 'grep', 'find', 'echo', 'pwd',
+    'mkdir', 'touch', 'cp', 'mv', 'rm', 'chmod', 'chown',
+    'wc', 'head', 'tail', 'sort', 'uniq', 'cut', 'tr',
+    'cd', 'pwd', 'test',
+  ],
+
   maxConcurrentWorkers: 4,
   workerIdleTimeoutMs: 300000,
   
