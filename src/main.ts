@@ -22,7 +22,23 @@ const sessionRecap = new SessionRecap(memoryPalace)
 const preCompactHook = new PreCompactHook()
 
 async function main() {
-  const projectRoot = process.argv[2] || process.cwd()
+  // 解析参数
+  const args = process.argv.slice(2)
+  let projectRoot = process.cwd()
+  let resumeSessionId: string | null = null
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--resume' && args[i + 1]) {
+      resumeSessionId = args[i + 1]
+      i++
+    } else if (!args[i].startsWith('--')) {
+      projectRoot = args[i]
+    }
+  }
+
+  if (resumeSessionId) {
+    console.log(`📋 Resuming session: ${resumeSessionId}`)
+  }
 
   console.log('╔══════════════════════════════════════════╗')
   console.log('║   Local Coding Agent (MiniMax M2.7)     ║')
@@ -37,13 +53,29 @@ async function main() {
   await coordinator.init()
 
   // 关联 PreCompactHook
-  preCompactHook.setTaskManager(coordinator.taskManager)
+  preCompactHook.setTaskManager(coordinator.getTaskManager())
   preCompactHook.setMemoryPalace(memoryPalace)
 
-  // 尝试加载 recap（上次离开摘要）
-  const recap = await sessionRecap.generateRecap(coordinator.sessionId || 'unknown')
-  if (recap) {
-    console.log('📋 [Recap] ' + recap.split('\n').slice(0, 3).join(' | '))
+  // 会话恢复（--resume 或自动加载最近 session）
+  if (resumeSessionId) {
+    const restored = await sessionRecap.restoreSession(resumeSessionId)
+    if (restored.session) {
+      coordinator.restoreFromSession(restored.session)
+      console.log('✅ Session restored from:', restored.session.id)
+      console.log('📋 [Recap] ' + restored.session.coordinatorContext.split('\n').slice(0, 2).join(' | '))
+    } else {
+      console.log('⚠️  Session not found:', resumeSessionId)
+    }
+  } else {
+    // 无 --resume 时，加载最近 session 的 recap
+    const sessions = coordinator.getSessionStore().list()
+    if (sessions && sessions.length > 0) {
+      const lastSession = sessions[0]
+      const recap = await sessionRecap.generateRecap(lastSession.id)
+      if (recap) {
+        console.log('📋 [Recap] ' + recap.summary.split('\n').slice(0, 3).join(' | '))
+      }
+    }
   }
 
   // 检查 PALACE.md 热缓存
@@ -67,7 +99,7 @@ async function main() {
         console.log('\n' + response + '\n')
       } else {
         // PreCompact 检查：压缩前阻断守卫
-        const pendingTasks = coordinator.taskManager.getAll()
+        const pendingTasks = coordinator.getTaskManager().getAll()
           .filter(t => !['completed', 'failed', 'killed'].includes(t.status))
         if (pendingTasks.length > 0) {
           const preCompactCtx: PreCompactContext = {

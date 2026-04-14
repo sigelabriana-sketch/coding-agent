@@ -233,6 +233,7 @@ Rules:
             }
             this.context += `\n\n[TASK ${taskId} ${result.status}]: ${result.summary}`
             console.log(`[Coordinator] ${task.description}: ${result.status}`)
+            this.save()  // 每完成一个任务自动保存
           })
         }
       }
@@ -357,6 +358,35 @@ Provide a concise summary of:
     if (lower.includes('test') || lower.includes('verify') || lower.includes('benchmark')) return 'testing'
     if (lower.includes('design') || lower.includes('api') || lower.includes('feature') || lower.includes('implement')) return 'coding'
     return 'coding'
+  }
+
+  // ============================================================
+  // 会话恢复
+  // ============================================================
+  restoreFromSession(session: {
+    id: string
+    tasks: Task[]
+    coordinatorContext: string
+    completedTaskIds: string[]
+    failedTaskIds: string[]
+  }): void {
+    this.sessionId = session.id
+    // 恢复任务
+    for (const task of session.tasks) {
+      this.taskManager.add(task)
+    }
+    // 恢复上下文（用于 Planner 理解之前的状态）
+    this.context = session.coordinatorContext
+    console.log(`[Coordinator] Restored session ${session.id} with ${session.tasks.length} task(s)`)
+    console.log(`[Coordinator]   Completed: ${session.completedTaskIds.length}, Failed: ${session.failedTaskIds.length}`)
+  }
+
+  getSessionStore(): SessionStore {
+    return this.sessionStore
+  }
+
+  getTaskManager(): TaskStateMachine {
+    return this.taskManager
   }
 }
 

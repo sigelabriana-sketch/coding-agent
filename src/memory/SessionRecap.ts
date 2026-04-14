@@ -44,7 +44,7 @@ export class SessionRecap {
   // ============================================================
   // 生成离开摘要（返回时调用）
   // ============================================================
-  async generateRecap(awayMinutes: number): Promise<RecapResult> {
+  async generateRecap(sessionId: string): Promise<RecapResult> {
     // 1. 读取 PALACE.md 热缓存
     let palaceSnapshot = ''
     if (this.memoryPalace && this.memoryPalace.exists()) {
@@ -52,30 +52,35 @@ export class SessionRecap {
       palaceSnapshot = await this.memoryPalace.getHotCache()
     }
 
-    // 2. 读取最近一次 session
-    const sessions = this.sessionStore.list()
-    const lastSession = sessions[0]
+    // 2. 读取指定 session 或最近一次
+    const session = sessionId !== 'unknown'
+      ? this.sessionStore.load(sessionId)
+      : this.sessionStore.list()[0] || null
 
-    // 3. 获取未完成任务
+    // 3. 计算离开时间（分钟）
+    const awayMinutes = session
+      ? Math.floor((Date.now() - session.updatedAt) / 60000)
+      : 0
+
+    // 4. 获取未完成任务
     const pendingTasks: string[] = []
     if (this.taskManager) {
-      const tasks = this.taskManager.getAll()
-      for (const task of tasks) {
+      for (const task of this.taskManager.getAll()) {
         if (task.status === 'pending' || task.status === 'running') {
           pendingTasks.push(`${task.description} [${task.type}]`)
         }
       }
     }
 
-    // 4. 用 LLM 生成 recap
+    // 5. 用 LLM 生成 recap
     const recapText = await this.buildRecapText(awayMinutes, pendingTasks, palaceSnapshot)
 
     return {
       summary: recapText,
-      previousSessionId: lastSession?.id || 'unknown',
+      previousSessionId: session?.id || 'unknown',
       pendingTasks,
-      lastActivity: lastSession
-        ? new Date(lastSession.updatedAt).toLocaleString()
+      lastActivity: session
+        ? new Date(session.updatedAt).toLocaleString()
         : 'unknown',
       palaceSnapshot,
     }
