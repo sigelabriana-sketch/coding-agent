@@ -6,7 +6,7 @@ export const API_CONFIG = {
   // MiniMax M2.7 代理地址
   baseUrl: process.env.ANTHROPIC_BASE_URL || 'http://localhost:8080',
   apiKey: process.env.ANTHROPIC_AUTH_TOKEN || 'sk-test',
-  model: process.env.ANTHROPIC_MODEL || 'claude-3-5-sonnet-20241027',
+  model: process.env.ANTHROPIC_MODEL || 'astron-code-latest',
   
   // 请求配置
   maxTokens: 8192,
