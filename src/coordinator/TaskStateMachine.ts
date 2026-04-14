@@ -23,6 +23,10 @@ export class TaskStateMachine {
     return Array.from(this.tasks.values())
   }
 
+  getAllTasks(): Task[] {
+    return this.getAll()
+  }
+
   start(id: string): boolean {
     const task = this.tasks.get(id)
     if (!task || task.status !== 'pending') return false
